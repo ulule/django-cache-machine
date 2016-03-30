@@ -40,8 +40,7 @@ if django.get_version().startswith('1.3'):
 
 
 class CachingTestCase(TestCase):
-    fixtures = ['tests/testapp/fixtures/testapp/test_cache.json']
-    extra_apps = ['tests.testapp']
+    fixtures = ['test_cache.json']
 
     def setUp(self):
         cache.clear()
