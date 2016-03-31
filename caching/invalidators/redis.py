@@ -23,7 +23,7 @@ class RedisInvalidator(Invalidator):
         if not self.client:
             raise NotImplementedError('We can\'t retrieve the client based on the Django cache instance')
 
-        super(Invalidator, self).__init__(cache, *args, **kwargs)
+        super(RedisInvalidator, self).__init__(cache, *args, **kwargs)
 
     def safe_key(self, key):
         if ' ' in key or '\n' in key:

@@ -169,6 +169,7 @@ class CachingQuerySet(models.query.QuerySet):
             return iterator()
         if config.FETCH_BY_ID:
             iterator = self.fetch_by_id
+
         return iter(CacheMachine(self.model, query_string, iterator, self.timeout, db=self.db))
 
     def fetch_by_id(self):
