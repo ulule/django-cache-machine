@@ -17,7 +17,7 @@ from caching import config
 from caching.compat import cache
 from caching.utils import load_class
 
-log = logging.getLogger('caching.invalidation')
+logger = logging.getLogger('caching.invalidation')
 
 
 def make_key(k, with_locale=True):
@@ -42,6 +42,9 @@ def byid(obj):
 
 
 class Invalidator(object):
+    def __init__(self, logger, *args, **kwargs):
+        self.logger = logger
+
     def invalidate_objects(self, objects, is_new_instance=False, model_cls=None):
         """Invalidate all the flush lists for the given ``objects``."""
         obj_keys = [k for o in objects for k in o._cache_keys()]
@@ -56,10 +59,10 @@ class Invalidator(object):
             return
         obj_keys, flush_keys = self.expand_flush_lists(obj_keys, flush_keys)
         if obj_keys:
-            log.debug('deleting object keys: %s' % obj_keys)
+            self.logger.debug('deleting object keys: %s' % obj_keys)
             cache.delete_many(obj_keys)
         if flush_keys:
-            log.debug('clearing flush lists: %s' % flush_keys)
+            self.logger.debug('clearing flush lists: %s' % flush_keys)
             self.clear_flush_lists(flush_keys)
 
     def cache_objects(self, model, objects, query_key, query_flush):
@@ -70,7 +73,7 @@ class Invalidator(object):
 
         flush_lists = collections.defaultdict(set)
         for key in flush_keys:
-            log.debug('adding %s to %s' % (query_flush, key))
+            self.logger.debug('adding %s to %s' % (query_flush, key))
             flush_lists[key].add(query_flush)
         flush_lists[query_flush].add(query_key)
         # Add this query to the flush key for the entire model, if enabled
@@ -82,7 +85,7 @@ class Invalidator(object):
             obj_flush = obj.flush_key()
             for key in obj._flush_keys():
                 if key not in (obj_flush, model_flush):
-                    log.debug('related: adding %s to %s' % (obj_flush, key))
+                    self.logger.debug('related: adding %s to %s' % (obj_flush, key))
                     flush_lists[key].add(obj_flush)
                 if config.FETCH_BY_ID:
                     flush_lists[key].add(byid(obj))
@@ -95,7 +98,7 @@ class Invalidator(object):
         The search starts with the lists in `keys` and expands to any flush
         lists found therein.  Returns ({objects to flush}, {flush keys found}).
         """
-        log.debug('in expand_flush_lists')
+        self.logger.debug('in expand_flush_lists')
         obj_keys = set(obj_keys)
         search_keys = flush_keys = set(flush_keys)
 
@@ -108,12 +111,12 @@ class Invalidator(object):
                     new_keys.add(key)
                 else:
                     obj_keys.add(key)
-            if new_keys:
-                log.debug('search for %s found keys %s' % (search_keys, new_keys))
-                flush_keys.update(new_keys)
-                search_keys = new_keys
-            else:
+            if not new_keys:
                 return obj_keys, flush_keys
+
+            self.logger.debug('search for %s found keys %s' % (search_keys, new_keys))
+            flush_keys.update(new_keys)
+            search_keys = new_keys
 
     def add_to_flush_list(self, mapping):
         """Update flush lists with the {flush_key: [query_key,...]} map."""
@@ -138,12 +141,14 @@ class Invalidator(object):
 
 
 class RedisInvalidator(Invalidator):
-    def __init__(self, client):
+    def __init__(self, client, *args, **kwargs):
         self.client = client
+
+        super(Invalidator, self).__init__(*args, **kwargs)
 
     def safe_key(self, key):
         if ' ' in key or '\n' in key:
-            log.warning('BAD KEY: "%s"' % key)
+            self.logger.warning('BAD KEY: "%s"' % key)
             return ''
         return key
 
@@ -176,8 +181,8 @@ def get_redis_backend():
 
 
 if config.CACHE_MACHINE_NO_INVALIDATION:
-    invalidator = NullInvalidator()
+    invalidator = NullInvalidator(logger=logger)
 elif config.CACHE_MACHINE_USE_REDIS:
-    invalidator = RedisInvalidator(client=get_redis_backend())
+    invalidator = RedisInvalidator(client=get_redis_backend(), logger=logger)
 else:
-    invalidator = Invalidator()
+    invalidator = Invalidator(logger=logger)
