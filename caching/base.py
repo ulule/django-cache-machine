@@ -10,8 +10,9 @@ from django.db.models.sql import query, EmptyResultSet
 from django.utils import encoding
 
 from caching import config
-from .compat import DEFAULT_TIMEOUT
-from .invalidation import invalidator, flush_key, make_key, byid, cache
+from .compat import DEFAULT_TIMEOUT, cache
+from .invalidation import invalidator
+from .utils import flush_key, make_key, byid
 
 
 class NullHandler(logging.Handler):
