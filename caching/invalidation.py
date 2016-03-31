@@ -1,35 +1,21 @@
 from __future__ import unicode_literals
 
 import collections
-import functools
 import hashlib
 import logging
-import socket
-
-import django
-from django.conf import settings
-from django.core.cache import cache as default_cache
-from django.core.cache.backends.base import InvalidCacheBackendError
-from django.utils import encoding, translation, six
-from django.utils.six.moves.urllib.parse import parse_qsl
 
 try:
     import redis as redislib
 except ImportError:
     redislib = None
 
-# Look for an own cache first before falling back to the default cache
-try:
-    if django.VERSION[:2] >= (1, 7):
-        from django.core.cache import caches
-        cache = caches['cache_machine']
-    else:
-        from django.core.cache import get_cache
-        cache = get_cache('cache_machine')
-except (InvalidCacheBackendError, ValueError):
-    cache = default_cache
+from django.conf import settings
+from django.utils import encoding, translation, six
+
 
 from caching import config
+from caching.compat import cache
+from caching.utils import load_class
 
 log = logging.getLogger('caching.invalidation')
 
@@ -55,30 +41,7 @@ def byid(obj):
     return make_key('byid:' + key)
 
 
-def safe_redis(return_type):
-    """
-    Decorator to catch and log any redis errors.
-
-    return_type (optionally a callable) will be returned if there is an error.
-    """
-    def decorator(f):
-        @functools.wraps(f)
-        def wrapper(*args, **kw):
-            try:
-                return f(*args, **kw)
-            except (socket.error, redislib.RedisError) as e:
-                log.error('redis error: %s' % e)
-                # log.error('%r\n%r : %r' % (f.__name__, args[1:], kw))
-                if hasattr(return_type, '__call__'):
-                    return return_type()
-                else:
-                    return return_type
-        return wrapper
-    return decorator
-
-
 class Invalidator(object):
-
     def invalidate_objects(self, objects, is_new_instance=False, model_cls=None):
         """Invalidate all the flush lists for the given ``objects``."""
         obj_keys = [k for o in objects for k in o._cache_keys()]
@@ -175,6 +138,8 @@ class Invalidator(object):
 
 
 class RedisInvalidator(Invalidator):
+    def __init__(self, client):
+        self.client = client
 
     def safe_key(self, key):
         if ' ' in key or '\n' in key:
@@ -182,10 +147,9 @@ class RedisInvalidator(Invalidator):
             return ''
         return key
 
-    @safe_redis(None)
     def add_to_flush_list(self, mapping):
         """Update flush lists with the {flush_key: [query_key,...]} map."""
-        pipe = redis.pipeline(transaction=False)
+        pipe = self.client.pipeline(transaction=False)
         for key, list_ in list(mapping.items()):
             for query_key in list_:
                 # Redis happily accepts unicode, but returns byte strings,
@@ -193,80 +157,27 @@ class RedisInvalidator(Invalidator):
                 pipe.sadd(self.safe_key(key), query_key.encode('utf-8'))
         pipe.execute()
 
-    @safe_redis(set)
     def get_flush_lists(self, keys):
-        flush_list = redis.sunion(list(map(self.safe_key, keys)))
+        flush_list = self.client.sunion(list(map(self.safe_key, keys)))
         return [k.decode('utf-8') for k in flush_list]
 
-    @safe_redis(None)
     def clear_flush_lists(self, keys):
-        redis.delete(*list(map(self.safe_key, keys)))
+        self.client.delete(*list(map(self.safe_key, keys)))
 
 
 class NullInvalidator(Invalidator):
-
     def add_to_flush_list(self, mapping):
         return
 
 
-def parse_backend_uri(backend_uri):
-    """
-    Converts the "backend_uri" into a host and any extra params that are
-    required for the backend. Returns a (host, params) tuple.
-    """
-    backend_uri_sliced = backend_uri.split('://')
-    if len(backend_uri_sliced) > 2:
-        raise InvalidCacheBackendError(
-            "Backend URI can't have more than one scheme://")
-    elif len(backend_uri_sliced) == 2:
-        rest = backend_uri_sliced[1]
-    else:
-        rest = backend_uri_sliced[0]
-
-    host = rest
-    qpos = rest.find('?')
-    if qpos != -1:
-        params = dict(parse_qsl(rest[qpos + 1:]))
-        host = rest[:qpos]
-    else:
-        params = {}
-    if host.endswith('/'):
-        host = host[:-1]
-
-    return host, params
-
-
 def get_redis_backend():
     """Connect to redis from a string like CACHE_BACKEND."""
-    # From django-redis-cache.
-    server, params = parse_backend_uri(settings.REDIS_BACKEND)
-    db = params.pop('db', 0)
-    try:
-        db = int(db)
-    except (ValueError, TypeError):
-        db = 0
-    try:
-        socket_timeout = float(params.pop('socket_timeout'))
-    except (KeyError, ValueError):
-        socket_timeout = None
-    password = params.pop('password', None)
-    if ':' in server:
-        host, port = server.split(':')
-        try:
-            port = int(port)
-        except (ValueError, TypeError):
-            port = 6379
-    else:
-        host = 'localhost'
-        port = 6379
-    return redislib.Redis(host=host, port=port, db=db, password=password,
-                          socket_timeout=socket_timeout)
+    return load_class(settings.REDIS_BACKEND)(**settings.REDIS_BACKEND_OPTIONS)
 
 
 if config.CACHE_MACHINE_NO_INVALIDATION:
     invalidator = NullInvalidator()
 elif config.CACHE_MACHINE_USE_REDIS:
-    redis = get_redis_backend()
-    invalidator = RedisInvalidator()
+    invalidator = RedisInvalidator(client=get_redis_backend())
 else:
     invalidator = Invalidator()

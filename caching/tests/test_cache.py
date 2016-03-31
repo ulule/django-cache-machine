@@ -501,14 +501,6 @@ class CachingTestCase(TestCase):
             cache_mock.return_value.values.return_value = [None, [1]]
             self.assertEqual(base.invalidator.get_flush_lists(None), set([1]))
 
-    def test_parse_backend_uri(self):
-        """ Test that parse_backend_uri works as intended. Regression for #92. """
-        from caching.invalidation import parse_backend_uri
-        uri = 'redis://127.0.0.1:6379?socket_timeout=5'
-        host, params = parse_backend_uri(uri)
-        self.assertEqual(host, '127.0.0.1:6379')
-        self.assertEqual(params, {'socket_timeout': '5'})
-
     @mock.patch('caching.config.CACHE_INVALIDATE_ON_CREATE', 'whole-model')
     def test_invalidate_on_create_enabled(self):
         """ Test that creating new objects invalidates cached queries for that model. """
