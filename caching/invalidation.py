@@ -16,8 +16,7 @@ logger = logging.getLogger('caching.invalidation')
 if config.CACHE_MACHINE_NO_INVALIDATION:
     invalidator = NullInvalidator()
 elif config.CACHE_MACHINE_USE_REDIS:
-    invalidator = RedisInvalidator(cache=cache,
-                                   client=load_class(settings.REDIS_BACKEND)(**settings.REDIS_BACKEND_OPTIONS),
+    invalidator = RedisInvalidator(cache=load_class(settings.REDIS_BACKEND)(**settings.REDIS_BACKEND_OPTIONS),
                                    logger=logger)
 else:
     invalidator = Invalidator(cache=cache, logger=logger)
