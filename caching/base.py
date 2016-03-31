@@ -15,14 +15,7 @@ from .invalidation import invalidator
 from .utils import flush_key, make_key, byid
 
 
-class NullHandler(logging.Handler):
-
-    def emit(self, record):
-        pass
-
-
-log = logging.getLogger('caching')
-log.addHandler(NullHandler())
+logger = logging.getLogger('caching')
 
 
 class CachingManager(models.Manager):
@@ -99,7 +92,7 @@ class CacheMachine(object):
         # Try to fetch from the cache.
         cached = cache.get(query_key)
         if cached is not None:
-            log.debug('cache hit: %s' % query_key)
+            logger.debug('cache hit: %s' % query_key)
             for obj in cached:
                 obj.from_cache = True
                 yield obj
@@ -122,9 +115,9 @@ class CacheMachine(object):
 
     def cache_objects(self, objects, query_key):
         """Cache query_key => objects, then update the flush lists."""
-        log.debug('query_key: %s' % query_key)
+        logger.debug('query_key: %s' % query_key)
         query_flush = flush_key(self.query_string)
-        log.debug('query_flush: %s' % query_flush)
+        logger.debug('query_flush: %s' % query_flush)
         cache.add(query_key, objects, timeout=self.timeout)
         invalidator.cache_objects(self.model, objects, query_key, query_flush)
 
@@ -165,17 +158,18 @@ class CachingQuerySet(models.query.QuerySet):
 
     def iterator(self):
         iterator = super(CachingQuerySet, self).iterator
+
         if self.timeout == config.NO_CACHE:
             return iter(iterator())
-        else:
-            try:
-                # Work-around for Django #12717.
-                query_string = self.query_key()
-            except query.EmptyResultSet:
-                return iterator()
-            if config.FETCH_BY_ID:
-                iterator = self.fetch_by_id
-            return iter(CacheMachine(self.model, query_string, iterator, self.timeout, db=self.db))
+
+        try:
+            # Work-around for Django #12717.
+            query_string = self.query_key()
+        except query.EmptyResultSet:
+            return iterator()
+        if config.FETCH_BY_ID:
+            iterator = self.fetch_by_id
+        return iter(CacheMachine(self.model, query_string, iterator, self.timeout, db=self.db))
 
     def fetch_by_id(self):
         """
@@ -227,10 +221,11 @@ class CachingQuerySet(models.query.QuerySet):
             query_string = 'count:%s' % self.query_key()
         except query.EmptyResultSet:
             return 0
+
         if self.timeout == config.NO_CACHE or config.TIMEOUT == config.NO_CACHE:
             return super_count()
-        else:
-            return cached_with(self, super_count, query_string, config.TIMEOUT)
+
+        return cached_with(self, super_count, query_string, config.TIMEOUT)
 
     def cache(self, timeout=DEFAULT_TIMEOUT):
         qs = self._clone()
@@ -325,11 +320,11 @@ def cached(function, key_, duration=DEFAULT_TIMEOUT):
     key = _function_cache_key(key_)
     val = cache.get(key)
     if val is None:
-        log.debug('cache miss for %s' % key)
+        logger.debug('cache miss for %s' % key)
         val = function()
         cache.set(key, val, duration)
     else:
-        log.debug('cache hit for %s' % key)
+        logger.debug('cache hit for %s' % key)
     return val
 
 
@@ -340,7 +335,7 @@ def cached_with(obj, f, f_key, timeout=DEFAULT_TIMEOUT):
         obj_key = (obj.query_key() if hasattr(obj, 'query_key')
                    else obj.cache_key)
     except (AttributeError, EmptyResultSet):
-        log.warning('%r cannot be cached.' % encoding.smart_text(obj))
+        logger.warning('%r cannot be cached.' % encoding.smart_text(obj))
         return f()
 
     key = '%s:%s' % tuple(map(encoding.smart_text, (f_key, obj_key)))
