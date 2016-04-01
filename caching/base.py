@@ -9,6 +9,11 @@ from django.db.models import signals
 from django.db.models.sql import query, EmptyResultSet
 from django.utils import encoding
 
+try:
+    from django.db.models.query import ModelIterable
+except ImportError:
+    ModelIterable = None
+
 from caching import config
 from .compat import DEFAULT_TIMEOUT, cache
 from .invalidation import invalidator
@@ -160,6 +165,9 @@ class CachingQuerySet(models.query.QuerySet):
         iterator = super(CachingQuerySet, self).iterator
 
         if self.timeout == config.NO_CACHE:
+            return iter(iterator())
+
+        if ModelIterable is not None and getattr(self, '_iterable_class', None) != ModelIterable:
             return iter(iterator())
 
         try:
