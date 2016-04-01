@@ -579,8 +579,7 @@ class CachingTestCase(TestCase):
 # see https://code.djangoproject.com/ticket/23718
 class MultiDbTestCase(TransactionTestCase):
     multi_db = True
-    fixtures = ['tests/testapp/fixtures/testapp/test_cache.json']
-    extra_apps = ['tests.testapp']
+    fixtures = ['test_cache.json']
 
     def test_multidb_cache(self):
         """ Test where master and slave DB result in two different cache keys """
