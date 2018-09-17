@@ -9,6 +9,12 @@ class Invalidator(object):
         self.cache = cache
         self.logger = logger
 
+    def make_key(self, key):
+        if key.startswith(config.CACHE_PREFIX):
+            return key
+
+        return '{}{}'.format(config.CACHE_PREFIX, key)
+
     def invalidate_objects(self, objects, is_new_instance=False, model_cls=None):
         """Invalidate all the flush lists for the given ``objects``."""
         obj_keys = [k for o in objects for k in o._cache_keys()]
@@ -24,7 +30,7 @@ class Invalidator(object):
         obj_keys, flush_keys = self.expand_flush_lists(obj_keys, flush_keys)
         if obj_keys:
             self.logger.debug('deleting object keys: %s' % obj_keys)
-            self.cache.delete_many(obj_keys)
+            self.cache.delete_many(map(self.make_key, obj_keys))
         if flush_keys:
             self.logger.debug('clearing flush lists: %s' % flush_keys)
             self.clear_flush_lists(flush_keys)
@@ -71,7 +77,7 @@ class Invalidator(object):
         while 1:
             new_keys = set()
             for key in self.get_flush_lists(search_keys):
-                if key.startswith(config.FLUSH):
+                if config.FLUSH_PREFIX in key:
                     new_keys.add(key)
                 else:
                     obj_keys.add(key)
@@ -85,20 +91,20 @@ class Invalidator(object):
     def add_to_flush_list(self, mapping):
         """Update flush lists with the {flush_key: [query_key,...]} map."""
         flush_lists = collections.defaultdict(set)
-        flush_lists.update(self.cache.get_many(list(mapping.keys())))
+        flush_lists.update(self.cache.get_many(map(self.make_key, list(mapping.keys()))))
         for key, list_ in list(mapping.items()):
             if flush_lists[key] is None:
                 flush_lists[key] = set(list_)
             else:
                 flush_lists[key].update(list_)
-        self.cache.set_many(flush_lists)
+        self.cache.set_many(map(self.make_key, flush_lists))
 
     def get_flush_lists(self, keys):
         """Return a set of object keys from the lists in `keys`."""
         return set(e for flush_list in
-                   [_f for _f in list(self.cache.get_many(keys).values()) if _f]
+                   [_f for _f in list(self.cache.get_many(map(self.make_key, keys)).values()) if _f]
                    for e in flush_list)
 
     def clear_flush_lists(self, keys):
         """Remove the given keys from the database."""
-        self.cache.delete_many(keys)
+        self.cache.delete_many(map(self.make_key, keys))

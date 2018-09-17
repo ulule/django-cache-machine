@@ -29,7 +29,7 @@ class RedisInvalidator(Invalidator):
         if ' ' in key or '\n' in key:
             self.logger.warning('BAD KEY: "%s"' % key)
             return ''
-        return key
+        return self.make_key(key)
 
     def add_to_flush_list(self, mapping):
         """Update flush lists with the {flush_key: [query_key,...]} map."""
