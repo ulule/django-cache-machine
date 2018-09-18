@@ -2,6 +2,7 @@ from __future__ import unicode_literals
 
 import functools
 import logging
+import hashlib
 
 import django
 
@@ -12,7 +13,7 @@ from django.utils import encoding
 from django.core.cache.backends.base import DEFAULT_TIMEOUT
 
 from caching import config
-from .compat import cache
+
 from .invalidation import invalidator
 from .utils import flush_key, make_key, byid
 
@@ -94,15 +95,18 @@ class CachingModelIterable(ModelIterable):
         master), throwing a Django ValueError in the process. Django prevents
         cross DB model saving among related objects.
         """
-        query_db_string = "qs:%s::db:%s" % (self.queryset.query_key(), self.db)
-        return make_key(query_db_string, with_locale=False)
+        query_db_string = "%s::db:%s" % (self.queryset.query_key(), self.db)
+        return "{}:{}".format(
+            self.queryset.prefix_key, make_key(query_db_string, with_locale=False)
+        )
 
     def cache_objects(self, objects, query_key):
         """Cache query_key => objects, then update the flush lists."""
         logger.debug("query_key: %s" % query_key)
-        query_flush = flush_key(self.queryset.query_key())
+        query_flush = self.queryset.flush_key()
         logger.debug("query_flush: %s" % query_flush)
-        cache.add(query_key, objects, timeout=self.timeout)
+
+        invalidator.add(query_key, objects, timeout=self.timeout)
         invalidator.cache_objects(self.queryset.model, objects, query_key, query_flush)
 
     def __iter__(self):
@@ -126,7 +130,7 @@ class CachingModelIterable(ModelIterable):
         except query.EmptyResultSet:
             return
 
-        cached = cache.get(query_key)
+        cached = invalidator.get(query_key)
         if cached is not None:
             logger.debug("cache hit: %s" % query_key)
             for obj in cached:
@@ -177,12 +181,17 @@ class CachingQuerySet(models.query.QuerySet):
             self.timeout = DEFAULT_TIMEOUT
 
     def flush_key(self):
-        return flush_key(self.query_key())
+        return "{}:{}".format(self.prefix_key, flush_key(self.query_key()))
+
+    @property
+    def prefix_key(self):
+        meta = self.model._meta
+        return "qs:{}.{}".format(meta.app_label, meta.model_name)
 
     def query_key(self):
         clone = self.query.clone()
         sql, params = clone.get_compiler(using=self.db).as_sql()
-        return sql % params
+        return hashlib.md5(encoding.smart_bytes(sql % params)).hexdigest()
 
     def iterator(self):
         return self._iterable_class(self)
@@ -202,7 +211,7 @@ class CachingQuerySet(models.query.QuerySet):
         pks = [val[0] for val in vals]
         keys = dict((byid(self.model._cache_key(pk, self.db)), pk) for pk in pks)
         cached = dict(
-            (k, v) for k, v in list(cache.get_many(keys).items()) if v is not None
+            (k, v) for k, v in list(invalidator.get_many(keys).items()) if v is not None
         )
 
         # Pick up the objects we missed.
@@ -211,7 +220,7 @@ class CachingQuerySet(models.query.QuerySet):
             others = self.fetch_missed(missed)
             # Put the fetched objects back in cache.
             new = dict((byid(o), o) for o in others)
-            cache.set_many(new)
+            invalidator.set_many(new)
         else:
             new = {}
 
@@ -262,7 +271,9 @@ class CachingMixin(object):
     """Inherit from this class to get caching and invalidation helpers."""
 
     def flush_key(self):
-        return flush_key(self)
+        return "{}.{}:{}".format(
+            self._meta.app_label, self._meta.model_name, flush_key(self)
+        )
 
     def get_cache_key(self, incl_db=True):
         """Return a cache key based on the object's primary key."""
@@ -280,7 +291,11 @@ class CachingMixin(object):
         """
         # use dummy PK and DB reference that will never resolve to an actual
         # cache key for an object
-        return flush_key(cls._cache_key("all-pks", "all-dbs"))
+        return "{}.{}:{}".format(
+            cls._meta.app_label,
+            cls._meta.model_name,
+            flush_key(cls._cache_key("all-pks", "all-dbs")),
+        )
 
     @classmethod
     def _cache_key(cls, pk, db=None):
@@ -311,7 +326,9 @@ class CachingMixin(object):
                     related_model._cache_key(val, incl_db and self._state.db or None)
                 )
 
-        return (self.get_cache_key(incl_db=incl_db),) + tuple(keys)
+        cache_keys = (self.get_cache_key(incl_db=incl_db),) + tuple(keys)
+
+        return cache_keys
 
     def _flush_keys(self):
         """Return the flush key for self plus all related foreign keys."""
@@ -353,11 +370,11 @@ def _function_cache_key(key):
 def cached(function, key_, duration=DEFAULT_TIMEOUT):
     """Only calls the function if ``key`` is not already in the cache."""
     key = _function_cache_key(key_)
-    val = cache.get(key)
+    val = invalidator.get(key)
     if val is None:
         logger.debug("cache miss for %s" % key)
         val = function()
-        cache.set(key, val, duration)
+        invalidator.set(key, val, duration)
     else:
         logger.debug("cache hit for %s" % key)
     return val
