@@ -104,9 +104,7 @@ class Invalidator(object):
     def add_to_flush_list(self, mapping):
         """Update flush lists with the {flush_key: [query_key,...]} map."""
         flush_lists = collections.defaultdict(set)
-        flush_lists.update(
-            self.get_many(list(mapping.keys()))
-        )
+        flush_lists.update(self.get_many(list(mapping.keys())))
         for key, list_ in list(mapping.items()):
             if flush_lists[key] is None:
                 flush_lists[key] = set(list_)
