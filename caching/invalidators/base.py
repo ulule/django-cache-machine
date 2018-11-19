@@ -16,7 +16,7 @@ class Invalidator(object):
         return self.cache.add(self.make_key(key), objs, timeout=timeout)
 
     def set(self, key, value, duration):
-        self.cache.set(key, value, duration)
+        self.cache.set(self.make_key(key), value, duration)
 
     def make_key(self, key):
         if key.startswith(config.CACHE_PREFIX):
